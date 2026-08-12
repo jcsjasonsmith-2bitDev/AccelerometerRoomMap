@@ -3,308 +3,275 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta http-equiv="Permissions-Policy" content="accelerometer=*, gyroscope=*, magnetometer=*">
     <title>IMU Room Mapper</title>
     <style>
-        :root {
-            --bg: #0b0f14;
-            --panel: rgba(12, 18, 24, 0.94);
-            --cyan: #00e6c3;
-            --red: #ff3b6b;
-            --muted: #8aa0b3;
-            --warn: #ffd166;
-        }
+        :root { --bg:#090c10; --cyan:#00e6c3; --red:#ff3b6b; --muted:#8aa0b3; --warn:#ffd166; }
         * { box-sizing: border-box; }
-        html, body {
-            margin: 0; padding: 0; width: 100%; height: 100%;
-            background: var(--bg); color: var(--cyan);
-            font-family: ui-monospace, "Courier New", monospace;
-            overflow: hidden; display: flex; flex-direction: column;
-            touch-action: none;
-        }
-        #ui {
-            padding: 12px; background: var(--panel);
-            border-bottom: 1px solid #1c3a3a; z-index: 10;
-            display: flex; flex-direction: column; gap: 8px;
-        }
-        .row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
-        .muted { color: var(--muted); font-size: 11px; }
-        .warn { color: var(--warn); }
-        .err { color: var(--red); }
-        .ok { color: var(--cyan); }
-        button {
-            flex: 1; padding: 12px; font-size: 15px; font-weight: 700;
-            border: 0; border-radius: 6px; text-transform: uppercase;
-            touch-action: manipulation; cursor: pointer;
-        }
-        #start-btn { background: var(--cyan); color: #04110e; }
-        #reset-btn { background: var(--red); color: #fff; }
-        #mark-btn { background: #1b3a4a; color: var(--cyan); display: none; }
-        .btns { display: flex; gap: 8px; }
-        #debug {
-            font-size: 10px; color: var(--warn); background: #000;
-            padding: 6px; height: 72px; overflow-y: auto;
-            border: 1px solid #333; white-space: pre-wrap;
-        }
-        #canvas-wrap {
-            flex: 1; position: relative; background: #000;
-            background-image:
-                linear-gradient(rgba(0,230,195,0.08) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0,230,195,0.08) 1px, transparent 1px);
-            background-size: 24px 24px;
-        }
-        canvas { display: block; width: 100%; height: 100%; }
-        #hint {
-            position: absolute; left: 8px; right: 8px; bottom: 8px;
-            font-size: 11px; color: var(--muted); pointer-events: none;
-        }
+        html, body { margin:0; height:100%; background:var(--bg); color:var(--cyan);
+            font-family: ui-monospace, Menlo, Consolas, monospace; display:flex; flex-direction:column; overflow:hidden; }
+        #ui { padding:10px 12px; background:#0c1218; border-bottom:1px solid #1c3a3a; z-index:2; }
+        .row { display:flex; justify-content:space-between; gap:8px; font-size:12px; margin:3px 0; }
+        .muted { color:var(--muted); font-size:10px; }
+        .warn { color:var(--warn); }
+        .err { color:var(--red); }
+        button { flex:1; padding:11px; font-weight:800; border:0; border-radius:6px; text-transform:uppercase; font-size:13px; }
+        #go { background:var(--cyan); color:#04110e; }
+        #reset { background:var(--red); color:#fff; display:none; }
+        #mark { background:#1b3a4a; color:var(--cyan); display:none; }
+        .btns { display:flex; gap:8px; margin-top:6px; }
+        #dbg { height:70px; overflow:auto; background:#000; color:var(--warn); font-size:10px; padding:6px; border:1px solid #333; white-space:pre-wrap; }
+        #wrap { flex:1; position:relative; background:#000;
+            background-image: linear-gradient(rgba(0,230,195,.08) 1px,transparent 1px),
+                              linear-gradient(90deg,rgba(0,230,195,.08) 1px,transparent 1px);
+            background-size:24px 24px; }
+        canvas { width:100%; height:100%; display:block; }
+        #hint { position:absolute; left:8px; right:8px; bottom:8px; color:var(--muted); font-size:11px; }
     </style>
 </head>
 <body>
-    <div id="ui">
-        <div class="row">
-            <span>Steps: <b id="step-count">0</b></span>
-            <span>Heading: <b id="heading-data">—</b></span>
-        </div>
-        <div class="row">
-            <span>X <b id="pos-x">0.00</b> m</span>
-            <span>Y <b id="pos-y">0.00</b> m</span>
-        </div>
-        <div class="row muted">
-            <span>Accel |a|: <b id="accel-mag">0.00</b></span>
-            <span>Events: motion <b id="motion-n">0</b> / orient <b id="orient-n">0</b></span>
-        </div>
-        <div class="row muted" id="secure-row"></div>
-        <div class="btns">
-            <button id="start-btn">Enable sensors</button>
-            <button id="mark-btn">Mark corner</button>
-            <button id="reset-btn" style="display:none">Reset</button>
-        </div>
-        <div id="debug">Tap Enable sensors, then walk with the phone flat in your hand (screen up).\n</div>
+<div id="ui">
+    <div class="row"><span>Steps <b id="steps">0</b></span><span>Heading <b id="hdg">—</b></span></div>
+    <div class="row"><span>X <b id="px">0.00</b> m</span><span>Y <b id="py">0.00</b> m</span></div>
+    <div class="row muted">
+        <span>lin|a| <b id="mag">0.00</b></span>
+        <span>src <b id="src">none</b></span>
     </div>
-    <div id="canvas-wrap">
-        <canvas id="map-canvas"></canvas>
-        <div id="hint">North is up. Hold phone level. Walk naturally — steps fire on bounce, not tilt.</div>
+    <div class="row muted"><span id="raw">ax=— ay=— az=— gx=— gy=— gz=—</span></div>
+    <div class="btns">
+        <button id="go">Start sensors</button>
+        <button id="mark">Step now</button>
+        <button id="reset">Reset</button>
     </div>
-
+    <div id="dbg"></div>
+</div>
+<div id="wrap">
+    <canvas id="c"></canvas>
+    <div id="hint">Walk with phone in hand, screen up. If lin|a| pulses and you still get no steps, press Step now.</div>
+</div>
 <script>
 (() => {
-    const STEP_LEN = 0.65;
-    const COOLDOWN_MS = 280;
-    const PEAK_MIN = 1.15;          // user-accel peak (m/s²) after gravity removal
-    const GRAVITY = 9.81;
+    const STEP_LEN = 0.62;
+    const COOLDOWN = 260;
+    let mapping = false, steps = 0, hdg = 0, x = 0, y = 0;
+    let path = [{x:0,y:0}];
+    let lastStep = 0, armed = true;
+    let grav = {x:0,y:0,z:9.81};
+    let lastGyroT = 0;
+    let haveCompass = false;
+    let lastLin = 0;
+    let src = 'none';
 
-    let mapping = false;
-    let steps = 0, headingDeg = 0, headingRad = 0;
-    let posX = 0, posY = 0;
-    let path = [{ x: 0, y: 0 }];
-    let lastStep = 0;
-    let motionN = 0, orientN = 0;
-    let lastMag = 0, rising = false;
-    let grav = { x: 0, y: 0, z: GRAVITY };
-    const GRAV_ALPHA = 0.12;
+    const $ = id => document.getElementById(id);
+    const canvas = $('c'), ctx = canvas.getContext('2d');
 
-    const $ = (id) => document.getElementById(id);
-    const startBtn = $('start-btn');
-    const resetBtn = $('reset-btn');
-    const markBtn = $('mark-btn');
-    const canvas = $('map-canvas');
-    const ctx = canvas.getContext('2d');
-
-    function log(msg, cls = '') {
-        const t = new Date().toLocaleTimeString();
-        const line = document.createElement('div');
-        line.className = cls;
-        line.textContent = `[${t}] ${msg}`;
-        $('debug').appendChild(line);
-        $('debug').scrollTop = $('debug').scrollHeight;
+    function log(m, cls) {
+        const d = document.createElement('div');
+        if (cls) d.className = cls;
+        d.textContent = '[' + new Date().toLocaleTimeString() + '] ' + m;
+        $('dbg').appendChild(d);
+        $('dbg').scrollTop = $('dbg').scrollHeight;
     }
 
-    const secure = window.isSecureContext;
-    $('secure-row').innerHTML = secure
-        ? '<span class="ok">Secure context: yes (HTTPS / localhost)</span>'
-        : '<span class="err">NOT a secure context — Chrome will not send IMU data. Open this file via HTTPS or a local server.</span>';
-    if (!secure) log('Sensors blocked: page is not HTTPS.', 'err');
-
     function resize() {
-        canvas.width = canvas.parentElement.clientWidth * devicePixelRatio;
-        canvas.height = canvas.parentElement.clientHeight * devicePixelRatio;
-        ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+        const r = canvas.parentElement.getBoundingClientRect();
+        canvas.width = r.width * devicePixelRatio;
+        canvas.height = r.height * devicePixelRatio;
+        ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
         draw();
     }
     window.addEventListener('resize', resize);
 
     function draw() {
-        const w = canvas.parentElement.clientWidth;
-        const h = canvas.parentElement.clientHeight;
-        ctx.clearRect(0, 0, w, h);
-        const cx = w / 2, cy = h / 2, s = 28;
-        ctx.save();
-        ctx.translate(cx, cy);
-        if (path.length) {
-            ctx.beginPath();
-            ctx.moveTo(path[0].x * s, -path[0].y * s);
-            for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x * s, -path[i].y * s);
-            ctx.strokeStyle = '#00e6c3';
-            ctx.lineWidth = 3;
-            ctx.lineJoin = 'round';
-            ctx.stroke();
-        }
-        const px = posX * s, py = -posY * s;
+        const w = canvas.parentElement.clientWidth, h = canvas.parentElement.clientHeight;
+        ctx.clearRect(0,0,w,h);
+        const s = 28, cx = w/2, cy = h/2;
+        ctx.save(); ctx.translate(cx,cy);
         ctx.beginPath();
-        ctx.arc(px, py, 7, 0, Math.PI * 2);
-        ctx.fillStyle = '#ff3b6b';
-        ctx.fill();
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(px, py);
-        ctx.lineTo(px + Math.sin(headingRad) * 18, py - Math.cos(headingRad) * 18);
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2;
-        ctx.stroke();
+        path.forEach((p,i) => i ? ctx.lineTo(p.x*s, -p.y*s) : ctx.moveTo(p.x*s, -p.y*s));
+        ctx.strokeStyle = '#00e6c3'; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.stroke();
+        const px = x*s, py = -y*s, rad = hdg * Math.PI/180;
+        ctx.beginPath(); ctx.arc(px,py,7,0,Math.PI*2);
+        ctx.fillStyle = '#ff3b6b'; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(px,py);
+        ctx.lineTo(px + Math.sin(rad)*18, py - Math.cos(rad)*18);
+        ctx.strokeStyle = '#fff'; ctx.stroke();
         ctx.restore();
     }
 
-    function compassFromEvent(e) {
-        if (typeof e.webkitCompassHeading === 'number' && !Number.isNaN(e.webkitCompassHeading)) {
-            return e.webkitCompassHeading;
+    function setHdg(deg, from) {
+        if (deg == null || Number.isNaN(deg)) return;
+        hdg = (deg % 360 + 360) % 360;
+        $('hdg').textContent = Math.round(hdg) + '° ' + (from || '');
+        if (from === 'compass') haveCompass = true;
+        draw();
+    }
+
+    function step() {
+        const rad = hdg * Math.PI/180;
+        steps++;
+        x += Math.sin(rad) * STEP_LEN;
+        y += Math.cos(rad) * STEP_LEN;
+        path.push({x,y});
+        $('steps').textContent = steps;
+        $('px').textContent = x.toFixed(2);
+        $('py').textContent = y.toFixed(2);
+        draw();
+    }
+
+    function considerStep(lin) {
+        lastLin = lin;
+        $('mag').textContent = lin.toFixed(2);
+        if (!mapping) return;
+        const now = performance.now();
+        // Adaptive: rest ~0.1–0.4, walk peaks ~1.5–8
+        const thresh = 0.85;
+        if (armed && lin > thresh && now - lastStep > COOLDOWN) {
+            armed = false;
+            lastStep = now;
+            step();
         }
+        if (lin < thresh * 0.45) armed = true;
+    }
+
+    function ingestAccel(ax, ay, az, includingG, tag) {
+        if (ax == null && ay == null && az == null) return;
+        ax = ax || 0; ay = ay || 0; az = az || 0;
+        $('raw').textContent =
+            `ax=${ax.toFixed(2)} ay=${ay.toFixed(2)} az=${az.toFixed(2)}  ` + $('raw').textContent.replace(/^ax=.*?  /,'');
+        src = tag;
+        $('src').textContent = tag;
+        let lin;
+        if (includingG) {
+            grav.x = 0.1*ax + 0.9*grav.x;
+            grav.y = 0.1*ay + 0.9*grav.y;
+            grav.z = 0.1*az + 0.9*grav.z;
+            lin = Math.hypot(ax-grav.x, ay-grav.y, az-grav.z);
+        } else {
+            lin = Math.hypot(ax, ay, az);
+        }
+        considerStep(lin);
+    }
+
+    function ingestGyro(gx, gy, gz) {
+        if (gx == null && gy == null && gz == null) return;
+        gx = gx || 0; gy = gy || 0; gz = gz || 0;
+        const parts = $('raw').textContent.split('  ');
+        $('raw').textContent = (parts[0] || 'ax=— ay=— az=—') +
+            `  gx=${gx.toFixed(2)} gy=${gy.toFixed(2)} gz=${gz.toFixed(2)}`;
+        const t = performance.now();
+        if (lastGyroT && !haveCompass) {
+            const dt = (t - lastGyroT) / 1000;
+            // phone screen-up: yaw ≈ -gz (rad/s) in device frame — good enough to turn
+            setHdg(hdg - gz * dt * 180/Math.PI, 'gyro');
+        }
+        lastGyroT = t;
+        src = src.includes('gyro') ? src : src + '+gyro';
+        $('src').textContent = src;
+    }
+
+    function compassFrom(e) {
+        if (typeof e.webkitCompassHeading === 'number') return e.webkitCompassHeading;
         if (e.alpha == null) return null;
-        // Android Chrome: absolute event already uses north. Convert to compass heading.
-        if (e.absolute === true || e.type === 'deviceorientationabsolute') {
-            return (360 - e.alpha) % 360;
-        }
         return (360 - e.alpha) % 360;
     }
 
-    function handleOrientation(e) {
-        orientN++;
-        $('orient-n').textContent = orientN;
-        const h = compassFromEvent(e);
+    function onOrient(e) {
+        const h = compassFrom(e);
         if (h == null) return;
-        headingDeg = h;
-        headingRad = h * Math.PI / 180;
-        $('heading-data').textContent = Math.round(h) + '°';
-        if (mapping) draw();
+        setHdg(h, 'compass');
     }
 
-    function userAccelMagnitude(e) {
-        const ua = e.acceleration;
-        if (ua && (ua.x != null || ua.y != null || ua.z != null)) {
-            const x = ua.x || 0, y = ua.y || 0, z = ua.z || 0;
-            return Math.hypot(x, y, z);
-        }
+    function onMotion(e) {
+        const a = e.acceleration;
         const g = e.accelerationIncludingGravity;
-        if (!g) return 0;
-        const gx = g.x || 0, gy = g.y || 0, gz = g.z || 0;
-        grav.x = GRAV_ALPHA * gx + (1 - GRAV_ALPHA) * grav.x;
-        grav.y = GRAV_ALPHA * gy + (1 - GRAV_ALPHA) * grav.y;
-        grav.z = GRAV_ALPHA * gz + (1 - GRAV_ALPHA) * grav.z;
-        return Math.hypot(gx - grav.x, gy - grav.y, gz - grav.z);
-    }
-
-    function handleMotion(e) {
-        motionN++;
-        if (motionN === 1) log('First motion event received.', 'ok');
-        $('motion-n').textContent = motionN;
-        if (!mapping) return;
-
-        const mag = userAccelMagnitude(e);
-        lastMag = mag;
-        $('accel-mag').textContent = mag.toFixed(2);
-
-        const now = performance.now();
-        if (mag > PEAK_MIN) {
-            if (!rising && now - lastStep > COOLDOWN_MS) {
-                rising = true;
-                lastStep = now;
-                registerStep();
-            }
-        } else if (mag < PEAK_MIN * 0.55) {
-            rising = false;
+        const r = e.rotationRate;
+        if (a && (a.x != null || a.y != null || a.z != null) && (a.x || a.y || a.z)) {
+            ingestAccel(a.x, a.y, a.z, false, 'devicemotion.lin');
+        } else if (g && (g.x != null || g.y != null || g.z != null)) {
+            ingestAccel(g.x, g.y, g.z, true, 'devicemotion.g');
         }
+        if (r) ingestGyro(
+            (r.alpha != null ? r.alpha * Math.PI/180 : r.x),
+            (r.beta  != null ? r.beta  * Math.PI/180 : r.y),
+            (r.gamma != null ? r.gamma * Math.PI/180 : r.z)
+        );
     }
 
-    function registerStep() {
-        steps++;
-        posX += Math.sin(headingRad) * STEP_LEN;
-        posY += Math.cos(headingRad) * STEP_LEN;
-        path.push({ x: posX, y: posY });
-        $('step-count').textContent = steps;
-        $('pos-x').textContent = posX.toFixed(2);
-        $('pos-y').textContent = posY.toFixed(2);
-        draw();
-    }
-
-    async function requestPermission(ctor, name) {
-        if (!ctor || typeof ctor.requestPermission !== 'function') return 'not-required';
+    function startGeneric(name, Ctor, hz, onread) {
+        if (typeof Ctor !== 'function') { log(name + ' API missing'); return null; }
         try {
-            return await ctor.requestPermission();
-        } catch (err) {
-            log(name + ' permission error: ' + err, 'err');
-            return 'error';
+            const s = new Ctor({ frequency: hz });
+            s.addEventListener('reading', () => onread(s));
+            s.addEventListener('error', ev => log(name + ' error: ' + (ev.error && ev.error.name), 'err'));
+            s.start();
+            log(name + ' started', 'ok');
+            return s;
+        } catch (e) {
+            log(name + ' failed: ' + e.message, 'err');
+            return null;
         }
     }
 
-    function attachListeners() {
-        const abs = 'ondeviceorientationabsolute' in window;
-        if (abs) {
-            window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-            log('Orientation: deviceorientationabsolute');
-        }
-        window.addEventListener('deviceorientation', handleOrientation, true);
-        if (!abs) log('Orientation: deviceorientation (relative — walk after a figure-8 calibrate)');
-        window.addEventListener('devicemotion', handleMotion, true);
-        log('Motion listener attached.');
+    async function perm(name) {
+        if (!navigator.permissions || !navigator.permissions.query) return;
+        try {
+            const p = await navigator.permissions.query({ name });
+            log('permission ' + name + ' = ' + p.state);
+        } catch (_) {}
     }
 
-    startBtn.addEventListener('click', async () => {
-        log('Requesting sensor access…');
-        const o = await requestPermission(window.DeviceOrientationEvent, 'orientation');
-        const m = await requestPermission(window.DeviceMotionEvent, 'motion');
-        log('orientation=' + o + ' motion=' + m);
+    $('go').onclick = async () => {
+        log(window.isSecureContext ? 'secure context ok' : 'NOT HTTPS — sensors often empty', 'err');
 
-        attachListeners();
+        if (typeof DeviceMotionEvent !== 'undefined' && DeviceMotionEvent.requestPermission) {
+            try { log('motion perm ' + await DeviceMotionEvent.requestPermission()); }
+            catch (e) { log('motion perm fail ' + e, 'err'); }
+        }
+        if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) {
+            try { log('orient perm ' + await DeviceOrientationEvent.requestPermission()); }
+            catch (e) { log('orient perm fail ' + e, 'err'); }
+        }
+        await perm('accelerometer');
+        await perm('gyroscope');
+        await perm('magnetometer');
+
+        window.addEventListener('devicemotion', onMotion, true);
+        window.addEventListener('deviceorientation', onOrient, true);
+        if ('ondeviceorientationabsolute' in window) {
+            window.addEventListener('deviceorientationabsolute', onOrient, true);
+            log('absolute orientation attached');
+        }
+
+        startGeneric('Accelerometer', window.Accelerometer, 60, s => ingestAccel(s.x, s.y, s.z, true, 'Accelerometer'));
+        startGeneric('LinearAccelerationSensor', window.LinearAccelerationSensor, 60, s => ingestAccel(s.x, s.y, s.z, false, 'LinearAccel'));
+        startGeneric('Gyroscope', window.Gyroscope, 60, s => ingestGyro(s.x, s.y, s.z));
+        startGeneric('AbsoluteOrientationSensor', window.AbsoluteOrientationSensor, 30, s => {
+            // quaternion [x,y,z,w] → yaw
+            const [qx,qy,qz,qw] = s.quaternion || [];
+            if (qw == null) return;
+            const yaw = Math.atan2(2*(qw*qz + qx*qy), 1 - 2*(qy*qy + qz*qz));
+            setHdg(-yaw * 180/Math.PI, 'abs-orient');
+        });
+
         mapping = true;
-        startBtn.style.display = 'none';
-        resetBtn.style.display = 'block';
-        markBtn.style.display = 'block';
+        $('go').style.display = 'none';
+        $('reset').style.display = 'block';
+        $('mark').style.display = 'block';
         resize();
-
+        log('Walk. Watch lin|a| — it must jump each footfall.');
         setTimeout(() => {
-            if (motionN === 0) {
-                log('No motion events after 2s. On Android Chrome: Site settings → this site → allow Motion sensors. Must be HTTPS.', 'err');
+            if ($('mag').textContent === '0.00' && $('hdg').textContent === '—') {
+                log('Still zero samples. Chrome → Site settings → Motion sensors = Allow. Reload.', 'err');
             }
-            if (orientN === 0) {
-                log('No compass events. Wave the phone in a figure-8. Disable battery saver.', 'warn');
-            }
-        }, 2000);
-    });
+        }, 2500);
+    };
 
-    resetBtn.addEventListener('click', () => {
-        steps = 0; posX = 0; posY = 0;
-        path = [{ x: 0, y: 0 }];
-        $('step-count').textContent = '0';
-        $('pos-x').textContent = '0.00';
-        $('pos-y').textContent = '0.00';
-        draw();
-        log('Map reset.');
-    });
-
-    markBtn.addEventListener('click', () => {
-        path.push({ x: posX, y: posY });
-        log('Corner marked at ' + posX.toFixed(2) + ', ' + posY.toFixed(2));
-        draw();
-    });
-
-    // Tap screen to force a step if sensors are dead (debug / fallback)
-    canvas.addEventListener('click', () => {
-        if (!mapping) return;
-        registerStep();
-        log('Manual step (canvas tap).');
-    });
+    $('reset').onclick = () => {
+        steps = 0; x = 0; y = 0; path = [{x:0,y:0}];
+        $('steps').textContent = '0'; $('px').textContent = '0.00'; $('py').textContent = '0.00';
+        draw(); log('reset');
+    };
+    $('mark').onclick = () => { step(); log('manual step'); };
 
     resize();
 })();
