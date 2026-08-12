@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>HTML5 IMU Room Mapper</title>
+    <title>HTML5 IMU Room Mapper (Debug Mode)</title>
     <style>
         :root {
             --bg-color: #121212;
             --text-color: #00ffcc;
+            --error-color: #ff3366;
             --button-bg: #1e1e1e;
             --canvas-bg: #000000;
         }
@@ -52,6 +53,15 @@
         button:active {
             opacity: 0.7;
         }
+        #debug-log {
+            font-size: 10px;
+            color: #ffff00;
+            background: #000;
+            padding: 5px;
+            height: 60px;
+            overflow-y: scroll;
+            border: 1px solid #555;
+        }
         #canvas-container {
             flex-grow: 1;
             position: relative;
@@ -67,17 +77,6 @@
             width: 100%;
             height: 100%;
         }
-        #status-overlay {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            text-align: center;
-            background: rgba(0,0,0,0.8);
-            padding: 20px;
-            border: 1px solid var(--text-color);
-            border-radius: 8px;
-        }
     </style>
 </head>
 <body>
@@ -91,34 +90,29 @@
             <span>Pos X: <span id="pos-x">0.00</span>m</span>
             <span>Pos Y: <span id="pos-y">0.00</span>m</span>
         </div>
-        <button id="start-btn">Start Mapping Sequence</button>
-        <button id="reset-btn" style="display: none; background-color: #ff3366; color: white;">Reset Map</button>
+        <button id="start-btn">Request Sensor Access</button>
+        <button id="reset-btn" style="display: none; background-color: var(--error-color); color: white;">Reset Map</button>
+        <div id="debug-log">System Initialized. Awaiting user input...<br></div>
     </div>
 
     <div id="canvas-container">
-        <div id="status-overlay">
-            Press START to request sensor access and begin mapping. Walk slowly around the room.
-        </div>
         <canvas id="map-canvas"></canvas>
     </div>
 
     <script>
-        // State variables
+        // State and Debug Variables
         let isMapping = false;
         let steps = 0;
-        let currentHeading = 0; // In radians
-        let currentHeadingDegrees = 0;
+        let currentHeading = 0; 
         let posX = 0;
         let posY = 0;
-        const stepLength = 0.6; // Average step length in meters
-        
-        // Sensor threshold variables for step detection
-        const stepThreshold = 12.0; // m/s^2 magnitude to count as a step
+        const stepLength = 0.6; 
+        const stepThreshold = 12.0; 
         let lastStepTime = 0;
-        const stepCooldown = 400; // milliseconds
-
-        // Path history for drawing
+        const stepCooldown = 400; 
         let path = [{ x: 0, y: 0 }];
+        let motionEventFired = false;
+        let orientationEventFired = false;
 
         // DOM Elements
         const startBtn = document.getElementById('start-btn');
@@ -127,11 +121,21 @@
         const headingEl = document.getElementById('heading-data');
         const posXEl = document.getElementById('pos-x');
         const posYEl = document.getElementById('pos-y');
-        const statusOverlay = document.getElementById('status-overlay');
+        const debugLog = document.getElementById('debug-log');
         const canvas = document.getElementById('map-canvas');
         const ctx = canvas.getContext('2d');
 
-        // Resize Canvas dynamically
+        // Helper: Write to on-screen debug log
+        function logDebug(message, isError = false) {
+            const time = new Date().toLocaleTimeString();
+            const span = document.createElement('span');
+            span.style.color = isError ? '#ff3366' : '#ffff00';
+            span.innerText = `[${time}] ${message}\n`;
+            debugLog.appendChild(span);
+            debugLog.scrollTop = debugLog.scrollHeight;
+        }
+
+        // Canvas Setup
         function resizeCanvas() {
             canvas.width = canvas.parentElement.clientWidth;
             canvas.height = canvas.parentElement.clientHeight;
@@ -142,32 +146,25 @@
         // Core Drawing Function
         function drawMap() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
             const centerX = canvas.width / 2;
             const centerY = canvas.height / 2;
-            
-            // Scaling factor (pixels per meter)
             const scale = 30;
 
             ctx.save();
             ctx.translate(centerX, centerY);
 
-            // Draw path
             if (path.length > 0) {
                 ctx.beginPath();
-                ctx.moveTo(path[0].x * scale, -path[0].y * scale); // Invert Y for standard Cartesian
-                
+                ctx.moveTo(path[0].x * scale, -path[0].y * scale); 
                 for (let i = 1; i < path.length; i++) {
                     ctx.lineTo(path[i].x * scale, -path[i].y * scale);
                 }
-                
                 ctx.strokeStyle = '#00ffcc';
                 ctx.lineWidth = 3;
                 ctx.lineJoin = 'round';
                 ctx.stroke();
             }
 
-            // Draw current position indicator
             ctx.beginPath();
             ctx.arc(posX * scale, -posY * scale, 6, 0, Math.PI * 2);
             ctx.fillStyle = '#ff3366';
@@ -176,7 +173,6 @@
             ctx.lineWidth = 2;
             ctx.stroke();
 
-            // Draw heading indicator (small line pointing in current direction)
             ctx.beginPath();
             ctx.moveTo(posX * scale, -posY * scale);
             const pointerX = posX * scale + Math.sin(currentHeading) * 15;
@@ -189,37 +185,38 @@
             ctx.restore();
         }
 
-        // Handle Orientation Data (Compass Heading)
+        // Sensor Handlers
         function handleOrientation(event) {
-            let alpha = 0;
+            if (!orientationEventFired) {
+                orientationEventFired = true;
+                logDebug("Orientation data received successfully.");
+            }
 
-            // iOS absolute heading
+            let alpha = 0;
             if (event.webkitCompassHeading) {
                 alpha = event.webkitCompassHeading;
-            } 
-            // Android absolute heading fallback
-            else if (event.absolute && event.alpha !== null) {
+            } else if (event.absolute && event.alpha !== null) {
                 alpha = 360 - event.alpha; 
             } else {
                 alpha = event.alpha || 0;
             }
 
-            currentHeadingDegrees = alpha;
-            // Convert to radians (0 is North, clockwise)
             currentHeading = alpha * (Math.PI / 180);
             headingEl.innerText = Math.round(alpha) + '°';
-            
             if(isMapping) drawMap();
         }
 
-        // Handle Motion Data (Step Detection via Accelerometer)
         function handleMotion(event) {
+            if (!motionEventFired) {
+                motionEventFired = true;
+                logDebug("Motion data received successfully.");
+            }
+
             if (!isMapping) return;
 
-            const acc = event.accelerationIncludingGravity;
+            const acc = event.accelerationIncludingGravity || event.acceleration;
             if (!acc) return;
 
-            // Calculate vector magnitude
             const magnitude = Math.sqrt(
                 Math.pow(acc.x || 0, 2) + 
                 Math.pow(acc.y || 0, 2) + 
@@ -228,15 +225,13 @@
 
             const currentTime = new Date().getTime();
 
-            // Peak detection for step counting
             if (magnitude > stepThreshold && (currentTime - lastStepTime > stepCooldown)) {
                 lastStepTime = currentTime;
                 steps++;
                 stepCountEl.innerText = steps;
 
-                // Dead Reckoning Math: Update position based on step length and heading
                 posX += Math.sin(currentHeading) * stepLength;
-                posY += Math.cos(currentHeading) * stepLength; // North is positive Y
+                posY += Math.cos(currentHeading) * stepLength; 
 
                 posXEl.innerText = posX.toFixed(2);
                 posYEl.innerText = posY.toFixed(2);
@@ -246,60 +241,68 @@
             }
         }
 
-        // Initialization and Permissions
+        // Initialization
         startBtn.addEventListener('click', async () => {
-            // Request permissions for iOS 13+ devices
+            logDebug("Start button clicked. Checking API support...");
+            
+            if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+                logDebug("WARNING: Connection is not HTTPS. Sensors will likely be blocked.", true);
+            }
+
             if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+                logDebug("iOS 13+ detected. Requesting explicit permission...");
                 try {
                     const permissionState = await DeviceMotionEvent.requestPermission();
                     if (permissionState === 'granted') {
+                        logDebug("Permission GRANTED.");
                         startMapping();
                     } else {
-                        alert('Permission to access device sensors was denied.');
+                        logDebug("Permission DENIED by user or OS.", true);
                     }
                 } catch (error) {
-                    console.error(error);
-                    alert('Error requesting sensor permissions.');
+                    logDebug(`Permission Error: ${error.message}`, true);
                 }
             } else {
-                // Non-iOS 13+ devices
+                logDebug("Standard Android/Desktop detected. Assuming permission.");
                 startMapping();
             }
         });
 
         resetBtn.addEventListener('click', () => {
-            steps = 0;
-            posX = 0;
-            posY = 0;
-            path = [{ x: 0, y: 0 }];
-            stepCountEl.innerText = steps;
-            posXEl.innerText = '0.00';
-            posYEl.innerText = '0.00';
+            steps = 0; posX = 0; posY = 0; path = [{ x: 0, y: 0 }];
+            stepCountEl.innerText = steps; posXEl.innerText = '0.00'; posYEl.innerText = '0.00';
             drawMap();
+            logDebug("Map coordinates reset.");
         });
 
         function startMapping() {
             isMapping = true;
-            statusOverlay.style.display = 'none';
             startBtn.style.display = 'none';
             resetBtn.style.display = 'block';
 
-            window.addEventListener('deviceorientation', handleOrientation, true);
-            window.addEventListener('devicemotion', handleMotion, true);
-
-            // Optional: Grab high-level Wi-Fi assisted GPS location for global anchor mapping (logged to console)
-            if ("geolocation" in navigator) {
-                navigator.geolocation.getCurrentPosition((position) => {
-                    console.log("Global Anchor Established:", position.coords.latitude, position.coords.longitude);
-                }, (err) => {
-                    console.warn("Geolocation anchor unavailable", err);
-                }, { enableHighAccuracy: true });
+            if (window.DeviceOrientationEvent) {
+                window.addEventListener('deviceorientation', handleOrientation, true);
+                logDebug("Orientation listener attached.");
+            } else {
+                logDebug("DeviceOrientationEvent not supported.", true);
             }
 
-            resizeCanvas(); // Initialize canvas sizing
+            if (window.DeviceMotionEvent) {
+                window.addEventListener('devicemotion', handleMotion, true);
+                logDebug("Motion listener attached.");
+            } else {
+                logDebug("DeviceMotionEvent not supported.", true);
+            }
+
+            // Fallback timeout check
+            setTimeout(() => {
+                if (!motionEventFired) logDebug("ERR: No motion data received after 3 seconds. Check OS settings.", true);
+                if (!orientationEventFired) logDebug("ERR: No orientation data received after 3 seconds. Check OS settings.", true);
+            }, 3000);
+
+            resizeCanvas();
         }
 
-        // Initial setup
         resizeCanvas();
     </script>
 </body>
