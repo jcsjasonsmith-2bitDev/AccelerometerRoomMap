@@ -3,13 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>HTML5 IMU Room Mapper (Debug Mode)</title>
+    <title>HTML5 IMU Room Mapper (Android Fix)</title>
     <style>
         :root {
             --bg-color: #121212;
             --text-color: #00ffcc;
             --error-color: #ff3366;
-            --button-bg: #1e1e1e;
             --canvas-bg: #000000;
         }
         body, html {
@@ -58,7 +57,7 @@
             color: #ffff00;
             background: #000;
             padding: 5px;
-            height: 60px;
+            height: 80px;
             overflow-y: scroll;
             border: 1px solid #555;
         }
@@ -90,9 +89,12 @@
             <span>Pos X: <span id="pos-x">0.00</span>m</span>
             <span>Pos Y: <span id="pos-y">0.00</span>m</span>
         </div>
-        <button id="start-btn">Request Sensor Access</button>
+        <div class="data-row" style="color: #aaa; font-size: 11px;">
+            <span>Live Accel Mag: <span id="accel-mag">0.00</span></span>
+        </div>
+        <button id="start-btn">Start Mapping</button>
         <button id="reset-btn" style="display: none; background-color: var(--error-color); color: white;">Reset Map</button>
-        <div id="debug-log">System Initialized. Awaiting user input...<br></div>
+        <div id="debug-log">System Initialized. Awaiting start...<br></div>
     </div>
 
     <div id="canvas-container">
@@ -100,32 +102,30 @@
     </div>
 
     <script>
-        // State and Debug Variables
         let isMapping = false;
         let steps = 0;
         let currentHeading = 0; 
         let posX = 0;
         let posY = 0;
         const stepLength = 0.6; 
-        const stepThreshold = 12.0; 
+        
+        // Lowered threshold for easier triggering on mobile
+        const stepThreshold = 10.5; 
         let lastStepTime = 0;
-        const stepCooldown = 400; 
+        const stepCooldown = 350; 
         let path = [{ x: 0, y: 0 }];
-        let motionEventFired = false;
-        let orientationEventFired = false;
 
-        // DOM Elements
         const startBtn = document.getElementById('start-btn');
         const resetBtn = document.getElementById('reset-btn');
         const stepCountEl = document.getElementById('step-count');
         const headingEl = document.getElementById('heading-data');
         const posXEl = document.getElementById('pos-x');
         const posYEl = document.getElementById('pos-y');
+        const accelMagEl = document.getElementById('accel-mag');
         const debugLog = document.getElementById('debug-log');
         const canvas = document.getElementById('map-canvas');
         const ctx = canvas.getContext('2d');
 
-        // Helper: Write to on-screen debug log
         function logDebug(message, isError = false) {
             const time = new Date().toLocaleTimeString();
             const span = document.createElement('span');
@@ -135,7 +135,6 @@
             debugLog.scrollTop = debugLog.scrollHeight;
         }
 
-        // Canvas Setup
         function resizeCanvas() {
             canvas.width = canvas.parentElement.clientWidth;
             canvas.height = canvas.parentElement.clientHeight;
@@ -143,7 +142,6 @@
         }
         window.addEventListener('resize', resizeCanvas);
 
-        // Core Drawing Function
         function drawMap() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             const centerX = canvas.width / 2;
@@ -185,33 +183,21 @@
             ctx.restore();
         }
 
-        // Sensor Handlers
         function handleOrientation(event) {
-            if (!orientationEventFired) {
-                orientationEventFired = true;
-                logDebug("Orientation data received successfully.");
-            }
-
             let alpha = 0;
+
             if (event.webkitCompassHeading) {
                 alpha = event.webkitCompassHeading;
-            } else if (event.absolute && event.alpha !== null) {
-                alpha = 360 - event.alpha; 
-            } else {
-                alpha = event.alpha || 0;
+            } else if (event.alpha !== null) {
+                alpha = event.absolute ? (360 - event.alpha) : event.alpha;
             }
 
             currentHeading = alpha * (Math.PI / 180);
             headingEl.innerText = Math.round(alpha) + '°';
-            if(isMapping) drawMap();
+            if (isMapping) drawMap();
         }
 
         function handleMotion(event) {
-            if (!motionEventFired) {
-                motionEventFired = true;
-                logDebug("Motion data received successfully.");
-            }
-
             if (!isMapping) return;
 
             const acc = event.accelerationIncludingGravity || event.acceleration;
@@ -223,8 +209,11 @@
                 Math.pow(acc.z || 0, 2)
             );
 
+            accelMagEl.innerText = magnitude.toFixed(2);
+
             const currentTime = new Date().getTime();
 
+            // Detect step peak
             if (magnitude > stepThreshold && (currentTime - lastStepTime > stepCooldown)) {
                 lastStepTime = currentTime;
                 steps++;
@@ -241,67 +230,34 @@
             }
         }
 
-        // Initialization
-        startBtn.addEventListener('click', async () => {
-            logDebug("Start button clicked. Checking API support...");
-            
-            if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
-                logDebug("WARNING: Connection is not HTTPS. Sensors will likely be blocked.", true);
+        startBtn.addEventListener('click', () => {
+            isMapping = true;
+            startBtn.style.display = 'none';
+            resetBtn.style.display = 'block';
+
+            // Android absolute compass listener fix
+            if ('ondeviceorientationabsolute' in window) {
+                window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+                logDebug("Using absolute Android compass listener.");
+            } else if (window.DeviceOrientationEvent) {
+                window.addEventListener('deviceorientation', handleOrientation, true);
+                logDebug("Using standard orientation listener.");
             }
 
-            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-                logDebug("iOS 13+ detected. Requesting explicit permission...");
-                try {
-                    const permissionState = await DeviceMotionEvent.requestPermission();
-                    if (permissionState === 'granted') {
-                        logDebug("Permission GRANTED.");
-                        startMapping();
-                    } else {
-                        logDebug("Permission DENIED by user or OS.", true);
-                    }
-                } catch (error) {
-                    logDebug(`Permission Error: ${error.message}`, true);
-                }
-            } else {
-                logDebug("Standard Android/Desktop detected. Assuming permission.");
-                startMapping();
+            if (window.DeviceMotionEvent) {
+                window.addEventListener('devicemotion', handleMotion, true);
+                logDebug("Motion listener attached.");
             }
+
+            resizeCanvas();
         });
 
         resetBtn.addEventListener('click', () => {
             steps = 0; posX = 0; posY = 0; path = [{ x: 0, y: 0 }];
             stepCountEl.innerText = steps; posXEl.innerText = '0.00'; posYEl.innerText = '0.00';
             drawMap();
-            logDebug("Map coordinates reset.");
+            logDebug("Map reset.");
         });
-
-        function startMapping() {
-            isMapping = true;
-            startBtn.style.display = 'none';
-            resetBtn.style.display = 'block';
-
-            if (window.DeviceOrientationEvent) {
-                window.addEventListener('deviceorientation', handleOrientation, true);
-                logDebug("Orientation listener attached.");
-            } else {
-                logDebug("DeviceOrientationEvent not supported.", true);
-            }
-
-            if (window.DeviceMotionEvent) {
-                window.addEventListener('devicemotion', handleMotion, true);
-                logDebug("Motion listener attached.");
-            } else {
-                logDebug("DeviceMotionEvent not supported.", true);
-            }
-
-            // Fallback timeout check
-            setTimeout(() => {
-                if (!motionEventFired) logDebug("ERR: No motion data received after 3 seconds. Check OS settings.", true);
-                if (!orientationEventFired) logDebug("ERR: No orientation data received after 3 seconds. Check OS settings.", true);
-            }, 3000);
-
-            resizeCanvas();
-        }
 
         resizeCanvas();
     </script>
