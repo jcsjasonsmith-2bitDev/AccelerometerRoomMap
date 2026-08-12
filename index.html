@@ -3,263 +3,311 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>HTML5 IMU Room Mapper (Android Fix)</title>
+    <meta http-equiv="Permissions-Policy" content="accelerometer=*, gyroscope=*, magnetometer=*">
+    <title>IMU Room Mapper</title>
     <style>
         :root {
-            --bg-color: #121212;
-            --text-color: #00ffcc;
-            --error-color: #ff3366;
-            --canvas-bg: #000000;
+            --bg: #0b0f14;
+            --panel: rgba(12, 18, 24, 0.94);
+            --cyan: #00e6c3;
+            --red: #ff3b6b;
+            --muted: #8aa0b3;
+            --warn: #ffd166;
         }
-        body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            font-family: 'Courier New', Courier, monospace;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
+        * { box-sizing: border-box; }
+        html, body {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background: var(--bg); color: var(--cyan);
+            font-family: ui-monospace, "Courier New", monospace;
+            overflow: hidden; display: flex; flex-direction: column;
+            touch-action: none;
         }
-        #ui-container {
-            padding: 15px;
-            background-color: rgba(18, 18, 18, 0.9);
-            z-index: 10;
-            border-bottom: 1px solid var(--text-color);
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
+        #ui {
+            padding: 12px; background: var(--panel);
+            border-bottom: 1px solid #1c3a3a; z-index: 10;
+            display: flex; flex-direction: column; gap: 8px;
         }
-        .data-row {
-            display: flex;
-            justify-content: space-between;
-            font-size: 14px;
-        }
+        .row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+        .muted { color: var(--muted); font-size: 11px; }
+        .warn { color: var(--warn); }
+        .err { color: var(--red); }
+        .ok { color: var(--cyan); }
         button {
-            padding: 12px;
-            font-size: 16px;
-            font-weight: bold;
-            color: var(--bg-color);
-            background-color: var(--text-color);
-            border: none;
-            border-radius: 5px;
-            text-transform: uppercase;
-            touch-action: manipulation;
-            cursor: pointer;
+            flex: 1; padding: 12px; font-size: 15px; font-weight: 700;
+            border: 0; border-radius: 6px; text-transform: uppercase;
+            touch-action: manipulation; cursor: pointer;
         }
-        button:active {
-            opacity: 0.7;
+        #start-btn { background: var(--cyan); color: #04110e; }
+        #reset-btn { background: var(--red); color: #fff; }
+        #mark-btn { background: #1b3a4a; color: var(--cyan); display: none; }
+        .btns { display: flex; gap: 8px; }
+        #debug {
+            font-size: 10px; color: var(--warn); background: #000;
+            padding: 6px; height: 72px; overflow-y: auto;
+            border: 1px solid #333; white-space: pre-wrap;
         }
-        #debug-log {
-            font-size: 10px;
-            color: #ffff00;
-            background: #000;
-            padding: 5px;
-            height: 80px;
-            overflow-y: scroll;
-            border: 1px solid #555;
+        #canvas-wrap {
+            flex: 1; position: relative; background: #000;
+            background-image:
+                linear-gradient(rgba(0,230,195,0.08) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,230,195,0.08) 1px, transparent 1px);
+            background-size: 24px 24px;
         }
-        #canvas-container {
-            flex-grow: 1;
-            position: relative;
-            width: 100%;
-            background-color: var(--canvas-bg);
-            background-image: 
-                linear-gradient(rgba(0, 255, 204, 0.1) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0, 255, 204, 0.1) 1px, transparent 1px);
-            background-size: 20px 20px;
-        }
-        canvas {
-            display: block;
-            width: 100%;
-            height: 100%;
+        canvas { display: block; width: 100%; height: 100%; }
+        #hint {
+            position: absolute; left: 8px; right: 8px; bottom: 8px;
+            font-size: 11px; color: var(--muted); pointer-events: none;
         }
     </style>
 </head>
 <body>
-
-    <div id="ui-container">
-        <div class="data-row">
-            <span>Steps: <span id="step-count">0</span></span>
-            <span>Heading: <span id="heading-data">0°</span></span>
+    <div id="ui">
+        <div class="row">
+            <span>Steps: <b id="step-count">0</b></span>
+            <span>Heading: <b id="heading-data">—</b></span>
         </div>
-        <div class="data-row">
-            <span>Pos X: <span id="pos-x">0.00</span>m</span>
-            <span>Pos Y: <span id="pos-y">0.00</span>m</span>
+        <div class="row">
+            <span>X <b id="pos-x">0.00</b> m</span>
+            <span>Y <b id="pos-y">0.00</b> m</span>
         </div>
-        <div class="data-row" style="color: #aaa; font-size: 11px;">
-            <span>Live Accel Mag: <span id="accel-mag">0.00</span></span>
+        <div class="row muted">
+            <span>Accel |a|: <b id="accel-mag">0.00</b></span>
+            <span>Events: motion <b id="motion-n">0</b> / orient <b id="orient-n">0</b></span>
         </div>
-        <button id="start-btn">Start Mapping</button>
-        <button id="reset-btn" style="display: none; background-color: var(--error-color); color: white;">Reset Map</button>
-        <div id="debug-log">System Initialized. Awaiting start...<br></div>
+        <div class="row muted" id="secure-row"></div>
+        <div class="btns">
+            <button id="start-btn">Enable sensors</button>
+            <button id="mark-btn">Mark corner</button>
+            <button id="reset-btn" style="display:none">Reset</button>
+        </div>
+        <div id="debug">Tap Enable sensors, then walk with the phone flat in your hand (screen up).\n</div>
     </div>
-
-    <div id="canvas-container">
+    <div id="canvas-wrap">
         <canvas id="map-canvas"></canvas>
+        <div id="hint">North is up. Hold phone level. Walk naturally — steps fire on bounce, not tilt.</div>
     </div>
 
-    <script>
-        let isMapping = false;
-        let steps = 0;
-        let currentHeading = 0; 
-        let posX = 0;
-        let posY = 0;
-        const stepLength = 0.6; 
-        
-        // Lowered threshold for easier triggering on mobile
-        const stepThreshold = 10.5; 
-        let lastStepTime = 0;
-        const stepCooldown = 350; 
-        let path = [{ x: 0, y: 0 }];
+<script>
+(() => {
+    const STEP_LEN = 0.65;
+    const COOLDOWN_MS = 280;
+    const PEAK_MIN = 1.15;          // user-accel peak (m/s²) after gravity removal
+    const GRAVITY = 9.81;
 
-        const startBtn = document.getElementById('start-btn');
-        const resetBtn = document.getElementById('reset-btn');
-        const stepCountEl = document.getElementById('step-count');
-        const headingEl = document.getElementById('heading-data');
-        const posXEl = document.getElementById('pos-x');
-        const posYEl = document.getElementById('pos-y');
-        const accelMagEl = document.getElementById('accel-mag');
-        const debugLog = document.getElementById('debug-log');
-        const canvas = document.getElementById('map-canvas');
-        const ctx = canvas.getContext('2d');
+    let mapping = false;
+    let steps = 0, headingDeg = 0, headingRad = 0;
+    let posX = 0, posY = 0;
+    let path = [{ x: 0, y: 0 }];
+    let lastStep = 0;
+    let motionN = 0, orientN = 0;
+    let lastMag = 0, rising = false;
+    let grav = { x: 0, y: 0, z: GRAVITY };
+    const GRAV_ALPHA = 0.12;
 
-        function logDebug(message, isError = false) {
-            const time = new Date().toLocaleTimeString();
-            const span = document.createElement('span');
-            span.style.color = isError ? '#ff3366' : '#ffff00';
-            span.innerText = `[${time}] ${message}\n`;
-            debugLog.appendChild(span);
-            debugLog.scrollTop = debugLog.scrollHeight;
-        }
+    const $ = (id) => document.getElementById(id);
+    const startBtn = $('start-btn');
+    const resetBtn = $('reset-btn');
+    const markBtn = $('mark-btn');
+    const canvas = $('map-canvas');
+    const ctx = canvas.getContext('2d');
 
-        function resizeCanvas() {
-            canvas.width = canvas.parentElement.clientWidth;
-            canvas.height = canvas.parentElement.clientHeight;
-            drawMap();
-        }
-        window.addEventListener('resize', resizeCanvas);
+    function log(msg, cls = '') {
+        const t = new Date().toLocaleTimeString();
+        const line = document.createElement('div');
+        line.className = cls;
+        line.textContent = `[${t}] ${msg}`;
+        $('debug').appendChild(line);
+        $('debug').scrollTop = $('debug').scrollHeight;
+    }
 
-        function drawMap() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            const centerX = canvas.width / 2;
-            const centerY = canvas.height / 2;
-            const scale = 30;
+    const secure = window.isSecureContext;
+    $('secure-row').innerHTML = secure
+        ? '<span class="ok">Secure context: yes (HTTPS / localhost)</span>'
+        : '<span class="err">NOT a secure context — Chrome will not send IMU data. Open this file via HTTPS or a local server.</span>';
+    if (!secure) log('Sensors blocked: page is not HTTPS.', 'err');
 
-            ctx.save();
-            ctx.translate(centerX, centerY);
+    function resize() {
+        canvas.width = canvas.parentElement.clientWidth * devicePixelRatio;
+        canvas.height = canvas.parentElement.clientHeight * devicePixelRatio;
+        ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+        draw();
+    }
+    window.addEventListener('resize', resize);
 
-            if (path.length > 0) {
-                ctx.beginPath();
-                ctx.moveTo(path[0].x * scale, -path[0].y * scale); 
-                for (let i = 1; i < path.length; i++) {
-                    ctx.lineTo(path[i].x * scale, -path[i].y * scale);
-                }
-                ctx.strokeStyle = '#00ffcc';
-                ctx.lineWidth = 3;
-                ctx.lineJoin = 'round';
-                ctx.stroke();
-            }
-
+    function draw() {
+        const w = canvas.parentElement.clientWidth;
+        const h = canvas.parentElement.clientHeight;
+        ctx.clearRect(0, 0, w, h);
+        const cx = w / 2, cy = h / 2, s = 28;
+        ctx.save();
+        ctx.translate(cx, cy);
+        if (path.length) {
             ctx.beginPath();
-            ctx.arc(posX * scale, -posY * scale, 6, 0, Math.PI * 2);
-            ctx.fillStyle = '#ff3366';
-            ctx.fill();
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2;
+            ctx.moveTo(path[0].x * s, -path[0].y * s);
+            for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x * s, -path[i].y * s);
+            ctx.strokeStyle = '#00e6c3';
+            ctx.lineWidth = 3;
+            ctx.lineJoin = 'round';
             ctx.stroke();
-
-            ctx.beginPath();
-            ctx.moveTo(posX * scale, -posY * scale);
-            const pointerX = posX * scale + Math.sin(currentHeading) * 15;
-            const pointerY = -posY * scale - Math.cos(currentHeading) * 15; 
-            ctx.lineTo(pointerX, pointerY);
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-
-            ctx.restore();
         }
+        const px = posX * s, py = -posY * s;
+        ctx.beginPath();
+        ctx.arc(px, py, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff3b6b';
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(px + Math.sin(headingRad) * 18, py - Math.cos(headingRad) * 18);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
+    }
 
-        function handleOrientation(event) {
-            let alpha = 0;
-
-            if (event.webkitCompassHeading) {
-                alpha = event.webkitCompassHeading;
-            } else if (event.alpha !== null) {
-                alpha = event.absolute ? (360 - event.alpha) : event.alpha;
-            }
-
-            currentHeading = alpha * (Math.PI / 180);
-            headingEl.innerText = Math.round(alpha) + '°';
-            if (isMapping) drawMap();
+    function compassFromEvent(e) {
+        if (typeof e.webkitCompassHeading === 'number' && !Number.isNaN(e.webkitCompassHeading)) {
+            return e.webkitCompassHeading;
         }
-
-        function handleMotion(event) {
-            if (!isMapping) return;
-
-            const acc = event.accelerationIncludingGravity || event.acceleration;
-            if (!acc) return;
-
-            const magnitude = Math.sqrt(
-                Math.pow(acc.x || 0, 2) + 
-                Math.pow(acc.y || 0, 2) + 
-                Math.pow(acc.z || 0, 2)
-            );
-
-            accelMagEl.innerText = magnitude.toFixed(2);
-
-            const currentTime = new Date().getTime();
-
-            // Detect step peak
-            if (magnitude > stepThreshold && (currentTime - lastStepTime > stepCooldown)) {
-                lastStepTime = currentTime;
-                steps++;
-                stepCountEl.innerText = steps;
-
-                posX += Math.sin(currentHeading) * stepLength;
-                posY += Math.cos(currentHeading) * stepLength; 
-
-                posXEl.innerText = posX.toFixed(2);
-                posYEl.innerText = posY.toFixed(2);
-
-                path.push({ x: posX, y: posY });
-                drawMap();
-            }
+        if (e.alpha == null) return null;
+        // Android Chrome: absolute event already uses north. Convert to compass heading.
+        if (e.absolute === true || e.type === 'deviceorientationabsolute') {
+            return (360 - e.alpha) % 360;
         }
+        return (360 - e.alpha) % 360;
+    }
 
-        startBtn.addEventListener('click', () => {
-            isMapping = true;
-            startBtn.style.display = 'none';
-            resetBtn.style.display = 'block';
+    function handleOrientation(e) {
+        orientN++;
+        $('orient-n').textContent = orientN;
+        const h = compassFromEvent(e);
+        if (h == null) return;
+        headingDeg = h;
+        headingRad = h * Math.PI / 180;
+        $('heading-data').textContent = Math.round(h) + '°';
+        if (mapping) draw();
+    }
 
-            // Android absolute compass listener fix
-            if ('ondeviceorientationabsolute' in window) {
-                window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-                logDebug("Using absolute Android compass listener.");
-            } else if (window.DeviceOrientationEvent) {
-                window.addEventListener('deviceorientation', handleOrientation, true);
-                logDebug("Using standard orientation listener.");
+    function userAccelMagnitude(e) {
+        const ua = e.acceleration;
+        if (ua && (ua.x != null || ua.y != null || ua.z != null)) {
+            const x = ua.x || 0, y = ua.y || 0, z = ua.z || 0;
+            return Math.hypot(x, y, z);
+        }
+        const g = e.accelerationIncludingGravity;
+        if (!g) return 0;
+        const gx = g.x || 0, gy = g.y || 0, gz = g.z || 0;
+        grav.x = GRAV_ALPHA * gx + (1 - GRAV_ALPHA) * grav.x;
+        grav.y = GRAV_ALPHA * gy + (1 - GRAV_ALPHA) * grav.y;
+        grav.z = GRAV_ALPHA * gz + (1 - GRAV_ALPHA) * grav.z;
+        return Math.hypot(gx - grav.x, gy - grav.y, gz - grav.z);
+    }
+
+    function handleMotion(e) {
+        motionN++;
+        if (motionN === 1) log('First motion event received.', 'ok');
+        $('motion-n').textContent = motionN;
+        if (!mapping) return;
+
+        const mag = userAccelMagnitude(e);
+        lastMag = mag;
+        $('accel-mag').textContent = mag.toFixed(2);
+
+        const now = performance.now();
+        if (mag > PEAK_MIN) {
+            if (!rising && now - lastStep > COOLDOWN_MS) {
+                rising = true;
+                lastStep = now;
+                registerStep();
             }
+        } else if (mag < PEAK_MIN * 0.55) {
+            rising = false;
+        }
+    }
 
-            if (window.DeviceMotionEvent) {
-                window.addEventListener('devicemotion', handleMotion, true);
-                logDebug("Motion listener attached.");
+    function registerStep() {
+        steps++;
+        posX += Math.sin(headingRad) * STEP_LEN;
+        posY += Math.cos(headingRad) * STEP_LEN;
+        path.push({ x: posX, y: posY });
+        $('step-count').textContent = steps;
+        $('pos-x').textContent = posX.toFixed(2);
+        $('pos-y').textContent = posY.toFixed(2);
+        draw();
+    }
+
+    async function requestPermission(ctor, name) {
+        if (!ctor || typeof ctor.requestPermission !== 'function') return 'not-required';
+        try {
+            return await ctor.requestPermission();
+        } catch (err) {
+            log(name + ' permission error: ' + err, 'err');
+            return 'error';
+        }
+    }
+
+    function attachListeners() {
+        const abs = 'ondeviceorientationabsolute' in window;
+        if (abs) {
+            window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+            log('Orientation: deviceorientationabsolute');
+        }
+        window.addEventListener('deviceorientation', handleOrientation, true);
+        if (!abs) log('Orientation: deviceorientation (relative — walk after a figure-8 calibrate)');
+        window.addEventListener('devicemotion', handleMotion, true);
+        log('Motion listener attached.');
+    }
+
+    startBtn.addEventListener('click', async () => {
+        log('Requesting sensor access…');
+        const o = await requestPermission(window.DeviceOrientationEvent, 'orientation');
+        const m = await requestPermission(window.DeviceMotionEvent, 'motion');
+        log('orientation=' + o + ' motion=' + m);
+
+        attachListeners();
+        mapping = true;
+        startBtn.style.display = 'none';
+        resetBtn.style.display = 'block';
+        markBtn.style.display = 'block';
+        resize();
+
+        setTimeout(() => {
+            if (motionN === 0) {
+                log('No motion events after 2s. On Android Chrome: Site settings → this site → allow Motion sensors. Must be HTTPS.', 'err');
             }
+            if (orientN === 0) {
+                log('No compass events. Wave the phone in a figure-8. Disable battery saver.', 'warn');
+            }
+        }, 2000);
+    });
 
-            resizeCanvas();
-        });
+    resetBtn.addEventListener('click', () => {
+        steps = 0; posX = 0; posY = 0;
+        path = [{ x: 0, y: 0 }];
+        $('step-count').textContent = '0';
+        $('pos-x').textContent = '0.00';
+        $('pos-y').textContent = '0.00';
+        draw();
+        log('Map reset.');
+    });
 
-        resetBtn.addEventListener('click', () => {
-            steps = 0; posX = 0; posY = 0; path = [{ x: 0, y: 0 }];
-            stepCountEl.innerText = steps; posXEl.innerText = '0.00'; posYEl.innerText = '0.00';
-            drawMap();
-            logDebug("Map reset.");
-        });
+    markBtn.addEventListener('click', () => {
+        path.push({ x: posX, y: posY });
+        log('Corner marked at ' + posX.toFixed(2) + ', ' + posY.toFixed(2));
+        draw();
+    });
 
-        resizeCanvas();
-    </script>
+    // Tap screen to force a step if sensors are dead (debug / fallback)
+    canvas.addEventListener('click', () => {
+        if (!mapping) return;
+        registerStep();
+        log('Manual step (canvas tap).');
+    });
+
+    resize();
+})();
+</script>
 </body>
 </html>
